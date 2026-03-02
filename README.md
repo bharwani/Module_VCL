@@ -193,5 +193,6 @@ python -m pytest tests/ --cov=vcl_builder
 - The Jinja2 environment uses `autoescape=False` (required for raw VCL output).
 
 ## TODO
-- [ ] Add more use-cases
+- [ ] Add more use-cases: Hosts, enable DDOS, API Discovery, NGWAF & workspace
 - [ ] Complete testing
+- [ ] Write how IaC works with this CLI
