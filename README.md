@@ -2,6 +2,10 @@
 
 An interactive CLI wizard that generates Fastly-ready [VCL](https://developer.fastly.com/reference/vcl/) configuration files from a guided series of prompts. Answer questions about your backends, caching strategy, rate limiting, redirects, video streaming, and log streaming — and get a clean, deployable `.vcl` file at the end.
 
+```bash
+This wizard should be regarded is an extensible framework - add modules to suit your use case.
+```
+
 ## Features
 
 | Module | What it generates |
@@ -52,13 +56,13 @@ Phase 6: Log Streaming   — optional
 
 At the end a summary table is printed and you confirm before the file is generated.
 
-### Write output to a file
+### Write output to a file 
 
 ```bash
 vcl-builder generate --output my_service.vcl
 ```
 
-### Syntax-highlighted preview (then write)
+### Syntax-highlighted preview (NOT FULLY TESTED)
 
 ```bash
 vcl-builder generate --output my_service.vcl --preview
@@ -187,3 +191,7 @@ python -m pytest tests/ --cov=vcl_builder
 - Redirects use internal error codes 700 (→ 301) and 701 (→ 302); the destination URL is carried in `obj.response`.
 - Rate-limit redirect action uses error code 750.
 - The Jinja2 environment uses `autoescape=False` (required for raw VCL output).
+
+## TODO
+- [ ] Add more use-cases
+- [ ] Complete testing
