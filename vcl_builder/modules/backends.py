@@ -39,6 +39,14 @@ class BackendsModule(VCLModule):
     def name(self) -> str:
         return "backends"
 
+    @property
+    def backends(self) -> list[BackendConfig]:
+        return self._backends
+
+    @property
+    def director_type(self) -> str:
+        return self._director_type
+
     def get_snippets(self) -> VCLSnippets:
         snippets = VCLSnippets()
 

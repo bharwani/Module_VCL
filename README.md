@@ -2,9 +2,7 @@
 
 An interactive CLI wizard that generates Fastly-ready [VCL](https://developer.fastly.com/reference/vcl/) configuration files from a guided series of prompts. Answer questions about your backends, caching strategy, rate limiting, redirects, video streaming, and log streaming — and get a clean, deployable `.vcl` file at the end.
 
-```bash
-This wizard should be regarded is an extensible framework - add modules to suit your use case.
-```
+The wizard is an extensible framework — add modules to suit your use case.
 
 ## Features
 
@@ -20,7 +18,7 @@ This wizard should be regarded is an extensible framework - add modules to suit 
 ## Requirements
 
 - Python 3.11+
-- A Fastly service (the generated VCL is uploaded via the Fastly UI or API)
+- A Fastly service (the generated VCL is uploaded via the Fastly UI, API, or Terraform)
 
 ## Installation
 
@@ -56,13 +54,41 @@ Phase 6: Log Streaming   — optional
 
 At the end a summary table is printed and you confirm before the file is generated.
 
-### Write output to a file 
+### Write VCL to a file
 
 ```bash
 vcl-builder generate --output my_service.vcl
 ```
 
-### Syntax-highlighted preview (NOT FULLY TESTED)
+### Generate a Terraform project
+
+```bash
+vcl-builder generate --terraform ./infra/
+```
+
+Runs the same wizard, then writes a ready-to-use Terraform project to the target directory:
+
+| File | Contents |
+|---|---|
+| `versions.tf` | `terraform {}` block requiring `fastly/fastly ~> 5.0` and Terraform ≥ 1.3 |
+| `variables.tf` | `fastly_api_key` input variable (sensitive) |
+| `main.tf` | `provider "fastly"` + `fastly_service_vcl` resource with backends, health checks, and an inline `vcl {}` block |
+| `outputs.tf` | `service_id` and `active_version` outputs |
+| `main.vcl` | The rendered VCL, referenced by `main.tf` via `file()` |
+
+`--terraform` can be combined with `--output` (to also write a standalone VCL file) and `--preview`.
+
+#### Deploying the Terraform project
+
+```bash
+cd ./infra/
+terraform init
+terraform apply -var="fastly_api_key=<YOUR_KEY>"
+```
+
+> **Note on log streaming:** The Fastly Terraform provider requires you to know the destination type (`logging_s3 {}`, `logging_https {}`, `logging_bigquery {}`, etc.). The generated `main.tf` includes a TODO comment where you should add the appropriate logging block. See the [Fastly provider docs](https://registry.terraform.io/providers/fastly/fastly/latest/docs) for the full list.
+
+### Syntax-highlighted preview
 
 ```bash
 vcl-builder generate --output my_service.vcl --preview
@@ -71,7 +97,7 @@ vcl-builder generate --output my_service.vcl --preview
 ### Print to stdout
 
 ```bash
-vcl-builder generate          # no --output flag — raw VCL goes to stdout
+vcl-builder generate          # no flags — raw VCL goes to stdout
 vcl-builder generate > out.vcl
 ```
 
@@ -150,16 +176,121 @@ Emits a `log` statement in `vcl_log` to a named Fastly logging endpoint.
 
 - **Formats**: `combined` (Apache-style), `json`, or a custom VCL expression.
 - **Errors-only mode**: wraps the log statement in `if (resp.status >= 400)`.
-- The endpoint name must match the name configured in the Fastly UI or API.
+- The endpoint name must match the name configured in the Fastly UI, API, or Terraform.
+
+## Extending the wizard
+
+The wizard is designed to be extended. Each feature is a self-contained module that contributes VCL snippets to the final template. Adding a new phase takes three steps.
+
+### Step 1 — Write a module
+
+Create a file in `vcl_builder/modules/`. Your class must subclass `VCLModule` and implement two things: a `name` property and a `get_snippets()` method that returns a `VCLSnippets` instance.
+
+```python
+# vcl_builder/modules/my_feature.py
+from __future__ import annotations
+from .base import VCLModule, VCLSnippets
+
+class MyFeatureModule(VCLModule):
+    def __init__(self, my_param: str) -> None:
+        self._my_param = my_param
+
+    @property
+    def name(self) -> str:
+        return "my_feature"
+
+    def get_snippets(self) -> VCLSnippets:
+        return VCLSnippets(
+            vcl_recv=[f"  # my feature: {self._my_param}\n"],
+        )
+```
+
+`VCLSnippets` has one list per VCL subroutine. Append strings to whichever subroutines your feature touches:
+
+| Field | Injected into |
+|---|---|
+| `backends` | Top-level declarations (backend/director/ratecounter blocks) |
+| `vcl_recv` | `sub vcl_recv {}` |
+| `vcl_hash` | `sub vcl_hash {}` |
+| `vcl_fetch` | `sub vcl_fetch {}` |
+| `vcl_deliver` | `sub vcl_deliver {}` |
+| `vcl_error` | `sub vcl_error {}` |
+| `vcl_log` | `sub vcl_log {}` |
+
+### Step 2 — Export the module
+
+Add your class (and any supporting dataclasses) to `vcl_builder/modules/__init__.py` so the wizard can import it.
+
+```python
+# vcl_builder/modules/__init__.py
+from .my_feature import MyFeatureModule
+
+__all__ = [
+    ...,
+    "MyFeatureModule",
+]
+```
+
+### Step 3 — Add a wizard phase
+
+Add a collector function and wire it into `run_wizard()` in `vcl_builder/wizard.py`.
+
+```python
+# vcl_builder/wizard.py
+
+from .modules import MyFeatureModule
+
+def _collect_my_feature() -> MyFeatureModule | None:
+    console.rule("[bold blue]Phase 7: My Feature[/bold blue]")
+    if not _confirm("Configure my feature?", default=False):
+        return None
+
+    my_param = _ask("Enter a value for my param:", default="default_value")
+    return MyFeatureModule(my_param=my_param)
+
+
+def run_wizard() -> VCLConfig:
+    ...
+    # add at the end, before the summary phase
+    my_feature = _collect_my_feature()
+    if my_feature:
+        modules.append(my_feature)
+    ...
+```
+
+The wizard helpers available to you are:
+
+| Helper | Description |
+|---|---|
+| `_ask(prompt, default=...)` | Free-text input |
+| `_ask_int(prompt, default=...)` | Integer input with fallback |
+| `_confirm(prompt, default=...)` | Yes/no confirmation |
+| `_select(prompt, choices, default=...)` | Single-choice selection |
+
+### Customising the VCL template
+
+All snippets are rendered through `templates/main.vcl.j2`. If your module needs structural changes to the VCL file (e.g. a new top-level block that isn't a standard subroutine), edit that template directly. The variables available inside it are:
+
+```
+service_name  — string
+backends      — list[str]   (top-level declarations)
+vcl_recv      — list[str]
+vcl_hash      — list[str]
+vcl_fetch     — list[str]
+vcl_deliver   — list[str]
+vcl_error     — list[str]
+vcl_log       — list[str]
+```
 
 ## Project structure
 
 ```
-modular_VCL/
+Module_VCL/
 ├── vcl_builder/
-│   ├── cli.py          # Typer entry point (vcl-builder generate)
-│   ├── wizard.py       # Interactive questionary-based wizard
-│   ├── renderer.py     # VCLConfig dataclass + render_vcl()
+│   ├── cli.py                # Typer entry point (vcl-builder generate)
+│   ├── wizard.py             # Interactive questionary-based wizard
+│   ├── renderer.py           # VCLConfig dataclass + render_vcl()
+│   ├── terraform_renderer.py # Terraform project generator
 │   └── modules/
 │       ├── base.py           # VCLSnippets dataclass + VCLModule ABC
 │       ├── backends.py       # BackendConfig, HealthCheck, BackendsModule
@@ -169,8 +300,8 @@ modular_VCL/
 │       ├── video_streaming.py# VideoStreamingModule
 │       └── log_streaming.py  # LogStreamingModule
 ├── templates/
-│   └── main.vcl.j2     # Jinja2 VCL template
-├── tests/              # pytest test suite (85 tests)
+│   └── main.vcl.j2           # Jinja2 VCL template
+├── tests/                    # pytest test suite
 └── pyproject.toml
 ```
 
@@ -187,12 +318,12 @@ python -m pytest tests/ --cov=vcl_builder
 ## Architecture notes
 
 - **Module ordering** (enforced by the wizard): backends → caching → rate_limit → redirects → video_streaming → log_streaming.
-- Each module implements the `VCLModule` ABC and returns a `VCLSnippets` dataclass whose fields (`backends`, `vcl_recv`, `vcl_fetch`, `vcl_deliver`, `vcl_error`, `vcl_log`) are appended into the Jinja2 template.
+- Each module implements the `VCLModule` ABC and returns a `VCLSnippets` dataclass whose fields are appended in order into the Jinja2 template.
 - Redirects use internal error codes 700 (→ 301) and 701 (→ 302); the destination URL is carried in `obj.response`.
 - Rate-limit redirect action uses error code 750.
 - The Jinja2 environment uses `autoescape=False` (required for raw VCL output).
+- The Terraform renderer inspects the module list by type (`isinstance`) to extract structured data (e.g. backends) needed to populate HCL resource blocks.
 
 ## TODO
 - [ ] Add more use-cases: Hosts, enable DDOS, API Discovery, NGWAF & workspace
 - [ ] Complete testing
-- [ ] Write how IaC works with this CLI

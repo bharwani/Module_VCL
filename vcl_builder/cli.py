@@ -16,6 +16,7 @@ from rich.syntax import Syntax
 
 from . import __version__
 from .renderer import render_vcl
+from .terraform_renderer import render_terraform
 from .wizard import run_wizard
 
 app = typer.Typer(
@@ -66,19 +67,35 @@ def generate(
             help="Print a syntax-highlighted preview before writing.",
         ),
     ] = False,
+    terraform: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--terraform",
+            "-T",
+            help=(
+                "Write a Terraform project to this directory "
+                "(main.tf, variables.tf, outputs.tf, versions.tf, main.vcl)."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Run the interactive wizard and generate a Fastly VCL file."""
     config = run_wizard()
 
     vcl_output = render_vcl(config)
 
-    if preview or output is None:
+    if preview or (output is None and terraform is None):
         syntax = Syntax(vcl_output, "c", theme="monokai", line_numbers=True)
         console.print(syntax)
 
     if output:
         output.write_text(vcl_output, encoding="utf-8")
         console.print(f"\n[bold green]VCL written to:[/bold green] {output}")
-    elif not preview:
-        # If no --output and no --preview, just print raw text to stdout
+    elif not preview and terraform is None:
+        # If no --output, no --preview, and no --terraform, print raw text to stdout
         print(vcl_output)
+
+    if terraform:
+        render_terraform(config, vcl_output, terraform)
+        console.print(f"\n[bold green]Terraform project written to:[/bold green] {terraform}/")
+        console.print("  [dim]versions.tf, variables.tf, main.tf, outputs.tf, main.vcl[/dim]")
