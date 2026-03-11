@@ -112,3 +112,21 @@ class TestEmptyBackendsRaises:
     def test_raises(self):
         with pytest.raises(ValueError):
             BackendsModule(backends=[])
+
+
+class TestProperties:
+    def test_backends_property_returns_list(self):
+        b = make_single_backend()
+        m = BackendsModule(backends=[b])
+        assert m.backends == [b]
+
+    def test_director_type_property_default(self):
+        m = BackendsModule(backends=[make_single_backend()])
+        assert m.director_type == "none"
+
+    def test_director_type_property_custom(self):
+        m = BackendsModule(
+            backends=[BackendConfig("b1", "b1.example.com"), BackendConfig("b2", "b2.example.com")],
+            director_type="hash",
+        )
+        assert m.director_type == "hash"
